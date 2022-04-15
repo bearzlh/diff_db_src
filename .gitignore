@@ -1,0 +1,5 @@
+.idea
+/debug.log
+/package/
+config.json.*
+/package.tar.gz
