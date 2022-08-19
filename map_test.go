@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"diff_db/database"
 	"diff_db/helper"
 )
 
@@ -14,4 +15,10 @@ func TestLevel(t *testing.T) {
 	})
 
 	fmt.Println(s)
+}
+
+func TestQuery(t *testing.T) {
+	database.InitMysql()
+	database.CmdChannel = make(chan int, 4)
+	database.DataDiff("cps", "orders")
 }

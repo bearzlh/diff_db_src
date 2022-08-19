@@ -1,4 +1,5 @@
 {
     "debug": false,
-    "max_threshold": 5
+    "max_threshold": 5,
+    "data_threshold": 5
 }

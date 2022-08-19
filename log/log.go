@@ -15,6 +15,8 @@ type Log struct {
 	showSql bool
 }
 
+var ErrorLog []string
+
 func (L *Log) Debug(v ...interface{}) {
 	Debug(Sprintf("%s", v))
 }
@@ -63,12 +65,14 @@ func Debug(input string) {
 }
 
 func Error(input string) {
-	WriteLog(fmt.Sprintln(Magenta(input)))
+	// fmt.Println(Magenta(input))
+	ErrorLog = append(ErrorLog, Magenta(input).String())
+	WriteLog(fmt.Sprintln(input))
 }
 
 func Fatal(input string) {
-	WriteLog(fmt.Sprintln(Red(input)))
 	fmt.Println(Red(input))
+	WriteLog(fmt.Sprintln(input))
 	os.Exit(1)
 }
 

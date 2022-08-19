@@ -30,33 +30,19 @@ var diffCmd = &cobra.Command{
 		typeString, _ := cmd.Flags().GetString("types")
 		tableString, _ := cmd.Flags().GetString("tables")
 		parallel, _ := cmd.Flags().GetInt("parallel")
-		var dbList []string
 		var tableList []string
-		if dbString != "" {
-			dbList = strings.Split(dbString, ",")
-			for _, s := range dbList {
-				c := config.MysqlConfig.Get(s)
-				if c == nil {
-					log.Fatalf("配置不存在:%s", s)
-				}
-			}
-		} else {
-			for k, _ := range config.MysqlConfig.AllSettings() {
-				dbList = append(dbList, k)
-			}
-		}
+		database.InitMysql()
+		dbList := processDbList(dbString)
 		if tableString != "" {
+			if len(dbList) > 1 {
+				log.Fatalf("过滤数据表时数据库只能选择一个")
+			}
 			tableList = strings.Split(tableString, ",")
-		}
-		if tableString != "" && len(dbList) > 1 {
-			log.Fatalf("过滤数据表时数据库只能选择一个")
 		}
 		debug, _ := cmd.Flags().GetBool("debug")
 		if debug {
 			config.Config.Set("debug", true)
 		}
-		database.InitMysql()
-		uiprogress.Start()
 		GetTotalTask(typeString, tableList, dbList, parallel)
 		log.Infof("任务数:%d", database.TotalTask)
 		if database.TotalTask == 0 {
@@ -66,62 +52,123 @@ var diffCmd = &cobra.Command{
 		database.TaskChannel = make(chan int, database.TotalTask)
 		go func() {
 			for _, db := range dbList {
-				if strings.Contains(typeString, "table") {
-					go func(db string) {
-						database.TableCheck(db)
-					}(db)
-				}
-				var tl []string
-				// 过滤数据表时不进行数据表对比
-				if len(tableList) == 0 {
-					tl = database.GetDbTables(db)
-				} else {
-					tl = tableList
-				}
-				if strings.Contains(typeString, "field") {
-					go func(db string, tableList []string) {
-						database.FieldCheck(db, tableList)
-					}(db, tl)
-				}
-				if strings.Contains(typeString, "max") {
-					go func(db string, tableList []string) {
-						database.MaxCheck(db, tableList)
-					}(db, tl)
-				}
+				processTask(db, tableList, typeString)
 			}
 		}()
 
-		taskFinish := 0
-		bar := uiprogress.AddBar(database.TotalTask)
-		bar.AppendCompleted()
-		bar.AppendElapsed()
-		bar.AppendFunc(func(b *uiprogress.Bar) string {
-			return fmt.Sprintf("任务,异常(%4d/%4d,%4d)", b.Current(), database.TotalTask, database.TaskA.GetErrorTask())
-		})
-		for {
-			select {
-			case <-database.TaskChannel:
-				bar.Incr()
-				taskFinish++
-				log.Debugf("finishTask:%d", taskFinish)
-				break
-			}
+		// 等待任务完成
+		runProcess()
 
-			if taskFinish == database.TotalTask {
-				log.Debugf("finished")
-				break
-			}
+		if len(log.ErrorLog) > 0 {
+			fmt.Println("\n错误统计如下")
+			fmt.Println(strings.Join(log.ErrorLog, "\n"))
+			PrintSort(database.TaskA.ErrorData)
 		}
-		uiprogress.Stop()
-
-		fmt.Println("\n错误统计如下")
-		PrintSort(database.TaskA.ErrorData)
 
 		log.Info("任务结束")
+		fmt.Println("任务结束")
 	},
 }
 
-// 打印统计数据
+// 运行进度条
+func runProcess() {
+	uiprogress.Start()
+	bar := uiprogress.AddBar(database.TotalTask)
+	bar.AppendCompleted()
+	bar.AppendElapsed()
+	bar.AppendFunc(func(b *uiprogress.Bar) string {
+		return fmt.Sprintf("任务,异常(%4d/%4d,%4d)", b.Current(), database.TotalTask, database.TaskA.GetErrorTask())
+	})
+
+	taskFinish := 0
+	for {
+		select {
+		case <-database.TaskChannel:
+			bar.Incr()
+			taskFinish++
+			log.Debugf("finishTask:%d", taskFinish)
+			break
+		}
+
+		if taskFinish == database.TotalTask {
+			log.Debugf("finished")
+			break
+		}
+	}
+	uiprogress.Stop()
+}
+
+// 执行任务
+func processTask(db string, tableList []string, typeString string) {
+	if strings.Contains(typeString, "table") {
+		go func(db string) {
+			database.TableCheck(db)
+		}(db)
+	}
+	var tl []string
+	// 过滤数据表时不进行数据表对比
+	if len(tableList) == 0 {
+		tl = database.GetDbTables(db)
+	} else {
+		tl = tableList
+	}
+	if strings.Contains(typeString, "field") {
+		go func(db string, tableList []string) {
+			database.FieldCheck(db, tableList)
+		}(db, tl)
+	}
+	if strings.Contains(typeString, "max") {
+		go func(db string, tableList []string) {
+			database.MaxCheck(db, tableList)
+		}(db, tl)
+	}
+	if strings.Contains(typeString, "data") {
+		go func(db string, tableList []string) {
+			database.DataCheck(db, tableList)
+		}(db, tl)
+	}
+}
+
+// 获取数据库对比列表
+func processDbList(dbString string) []string {
+	var dbList []string
+	if dbString != "" {
+		// 单库对比
+		if strings.Contains(dbString, ":") {
+			dbsString := strings.Split(dbString, ":")
+			db1 := dbsString[0]
+			db2 := dbsString[1]
+			dbList = []string{db1}
+			checkDb(db1, db2)
+		} else {
+			dbList = strings.Split(dbString, ",")
+		}
+		for _, s := range dbList {
+			c := config.MysqlConfig.Get(s)
+			if c == nil {
+				log.Fatalf("配置不存在:%s", s)
+			}
+		}
+	} else {
+		for k := range config.MysqlConfig.AllSettings() {
+			dbList = append(dbList, k)
+		}
+	}
+
+	return dbList
+}
+
+// db2同步到对比连接组
+func checkDb(db1, db2 string) {
+	if _, ok := database.EngineMap[db2]; ok {
+		database.EngineCompareMap[db1] = database.EngineMap[db2]
+	} else {
+		log.Fatalf("对比的数据库配置不存在")
+		return
+	}
+}
+
+// PrintSort 打印统计数据
 func PrintSort(mp map[string]int) {
 	data := map[string]interface{}{}
 	nameLength := 10
@@ -140,6 +187,7 @@ func PrintSort(mp map[string]int) {
 	}
 }
 
+// GetTotalTask 汇总需要检测的任务数量
 func GetTotalTask(typeString string, tableList []string, dbList []string, parallel int) int {
 	bar := uiprogress.AddBar(len(dbList))
 	bar.AppendCompleted()
@@ -170,6 +218,9 @@ func GetTotalTask(typeString string, tableList []string, dbList []string, parall
 			if strings.Contains(typeString, "max") {
 				taskCount += tableCount
 			}
+			if strings.Contains(typeString, "data") {
+				taskCount += tableCount
+			}
 			database.TaskA.AddTotal(db, taskCount)
 			Lk.Lock()
 			database.TotalTask += taskCount
@@ -187,9 +238,9 @@ func GetTotalTask(typeString string, tableList []string, dbList []string, parall
 func init() {
 	rootCmd.AddCommand(diffCmd)
 
-	diffCmd.PersistentFlags().String("dbs", "", "配置文件中数据库连接名。可选多个，英文逗号隔开。默认全部")
-	diffCmd.PersistentFlags().String("types", "table,field,max", "可选多个，英文逗号隔开。可选:table,field,max。分别对比表，表字段，表数据")
-	diffCmd.PersistentFlags().String("tables", "", "可选多个，英文逗号隔开。默认全部")
-	diffCmd.PersistentFlags().Bool("debug", false, "是否debug，默认不开启。debug会输出详细信息，包括SQL日志")
-	diffCmd.PersistentFlags().Int("parallel", 4, "协程并发次数。填写过大会造成客户端&数据库压力升高")
+	diffCmd.PersistentFlags().StringP("dbs", "d", "", "数据库连接名，多个使用英文逗号隔开，默认全部，使用mysql.json与mysql-compare.json的同名配置对比。如果使用db1:db2的方式，db1与db2需要使用mysql.json中的连接名")
+	diffCmd.PersistentFlags().StringP("types", "t", "table,field,max,data", "可选多个，英文逗号隔开。可选:table,field,max,data。分别对比表，表字段，表数据，最后N条数据")
+	diffCmd.PersistentFlags().StringP("tables", "b", "", "可选多个，英文逗号隔开。默认全部")
+	diffCmd.PersistentFlags().BoolP("debug", "v", false, "是否debug，默认不开启。debug会输出详细信息，包括SQL日志")
+	diffCmd.PersistentFlags().IntP("parallel", "p", 4, "协程并发次数。填写过大会造成客户端&数据库压力升高")
 }

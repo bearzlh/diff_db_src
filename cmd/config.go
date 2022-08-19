@@ -41,6 +41,10 @@ var configCmd = &cobra.Command{
 		dbTo, _ := cmd.Flags().GetInt("db_to")
 		section, _ := cmd.Flags().GetString("section")
 		dbname, _ := cmd.Flags().GetString("database")
+		connect_name, _ := cmd.Flags().GetString("connect_name")
+		if connect_name == "" {
+			connect_name = dbname
+		}
 		backup, _ := cmd.Flags().GetBool("backup")
 		var cf *viper.Viper
 		var fileName string
@@ -60,7 +64,7 @@ var configCmd = &cobra.Command{
 				"port":     port,
 				"username": username,
 			}
-			cf.Set(dbname, Db)
+			cf.Set(connect_name, Db)
 		}
 		// 分库
 		if dbPrefix != "" && dbTo > dbFrom {
@@ -100,6 +104,7 @@ func init() {
 
 	configCmd.PersistentFlags().String("host", "", "主机名或IP")
 	configCmd.PersistentFlags().String("port", "3306", "端口")
+	configCmd.PersistentFlags().String("connect_name", "", "配置名称")
 	configCmd.PersistentFlags().String("database", "", "数据库名称-单库配置")
 	configCmd.PersistentFlags().String("username", "", "用户名")
 	configCmd.PersistentFlags().String("password", "", "密码")
